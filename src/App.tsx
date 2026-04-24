@@ -78,6 +78,33 @@ function getDurationForMode(m: Mode, pomodoroDuration: number, shortBreakDuratio
   return longBreakDuration * 60;
 }
 
+function isNotificationSupported() {
+  return 'Notification' in window;
+}
+
+async function requestNotificationsPermission() {
+  if (!isNotificationSupported()) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+  const permission = await Notification.requestPermission();
+  return permission === 'granted';
+}
+
+const PHASE_NOTIFICATION_COPY: Record<Mode, { title: string; body: string }> = {
+  pomodoro: {
+    title: 'Time to focus',
+    body: 'Break is over. Start your next focus session.',
+  },
+  shortBreak: {
+    title: 'Short break',
+    body: 'Focus session complete. Take a short break.',
+  },
+  longBreak: {
+    title: 'Long break',
+    body: 'Focus cycle complete. Take a longer rest.',
+  },
+};
+
 export default function App() {
   const [loading, setLoading] = useState(true);
 
@@ -126,6 +153,10 @@ const [autoNextPhase, setAutoNextPhase] = useState(() => {
   const saved = localStorage.getItem('autoNextPhase');
   return saved ? JSON.parse(saved) : false;
 });
+const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+  const saved = localStorage.getItem('notificationsEnabled');
+  return saved ? JSON.parse(saved) : false;
+});
 
   const [showSettings, setShowSettings] = useState(false);
 
@@ -136,7 +167,8 @@ localStorage.setItem('longBreakDuration', longBreakDuration.toString());
 localStorage.setItem('chimeType', chimeType);
 localStorage.setItem('sessionsUntilLongBreak', sessionsUntilLongBreak.toString());
 localStorage.setItem('autoNextPhase', JSON.stringify(autoNextPhase));
-}, [pomodoroDuration, shortBreakDuration, longBreakDuration, chimeType, sessionsUntilLongBreak, autoNextPhase]);
+localStorage.setItem('notificationsEnabled', JSON.stringify(notificationsEnabled));
+}, [pomodoroDuration, shortBreakDuration, longBreakDuration, chimeType, sessionsUntilLongBreak, autoNextPhase, notificationsEnabled]);
 
   const MODES: Record<Mode, { label: string; time: number; icon: React.ElementType }> = {
     pomodoro: { label: 'Focus', time: pomodoroDuration * 60, icon: Brain },
@@ -163,6 +195,7 @@ const sessionsUntilLongBreakRef = useRef(sessionsUntilLongBreak);
 const soundEnabledRef = useRef(soundEnabled);
 const chimeTypeRef = useRef(chimeType);
 const autoNextPhaseRef = useRef(autoNextPhase);
+const notificationsEnabledRef = useRef(notificationsEnabled);
 
 modeRef.current = mode;
 cycleCountRef.current = cycleCount;
@@ -171,6 +204,7 @@ soundEnabledRef.current = soundEnabled;
 chimeTypeRef.current = chimeType;
 isActiveRef.current = isActive;
 autoNextPhaseRef.current = autoNextPhase;
+notificationsEnabledRef.current = notificationsEnabled;
 
   useEffect(() => {
     CHIME_OPTIONS.forEach(opt => {
@@ -220,6 +254,16 @@ autoNextPhaseRef.current = autoNextPhase;
     }
   }, []);
 
+  const showPhaseNotification = useCallback((nextMode: Mode) => {
+    if (!notificationsEnabledRef.current || !isNotificationSupported() || Notification.permission !== 'granted') return;
+    const { title, body } = PHASE_NOTIFICATION_COPY[nextMode];
+    new Notification(title, {
+      body,
+      icon: pomodoroImage,
+      tag: 'pomodoro-phase-change',
+    });
+  }, []);
+
   const changeMode = useCallback((newMode: Mode) => {
     setMode(newMode);
     setIsActive(false);
@@ -238,22 +282,23 @@ if (!manualSkip) playChime();
 const currentMode = modeRef.current;
 const currentCycleCount = cycleCountRef.current;
 const currentSessions = sessionsUntilLongBreakRef.current;
+let nextMode: Mode;
 
 if (currentMode === 'pomodoro') {
 const newCount = currentCycleCount + 1;
 setCycleCount(newCount);
-const nextMode = (newCount % currentSessions === 0) ? 'longBreak' : 'shortBreak';
+nextMode = (newCount % currentSessions === 0) ? 'longBreak' : 'shortBreak';
 changeMode(nextMode);
-if (autoNextPhaseRef.current) {
-setTimeout(() => setIsActive(true), 500);
-}
 } else {
-changeMode('pomodoro');
+nextMode = 'pomodoro';
+changeMode(nextMode);
+}
+
+if (!manualSkip) showPhaseNotification(nextMode);
 if (autoNextPhaseRef.current) {
 setTimeout(() => setIsActive(true), 500);
 }
-}
-}, [playChime, changeMode]);
+}, [playChime, changeMode, showPhaseNotification]);
 
   useEffect(() => {
     if (!isActive) {
@@ -328,6 +373,16 @@ setTimeout(() => setIsActive(true), 500);
       unlockAudio();
     }
     setIsActive(!isActive);
+  };
+
+  const toggleNotifications = async () => {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      return;
+    }
+
+    const granted = await requestNotificationsPermission();
+    setNotificationsEnabled(granted);
   };
 
   const resetTimer = () => {
@@ -669,6 +724,22 @@ autoNextPhase ? 'bg-[#E06B53]' : 'bg-gray-300'
 <div
 className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${
 autoNextPhase ? 'left-6' : 'left-1'
+}`}
+/>
+</button>
+</div>
+
+<div className="flex items-center justify-between py-2">
+<span className="text-sm font-medium text-gray-600">Browser notifications</span>
+<button
+onClick={toggleNotifications}
+className={`relative w-12 h-7 rounded-full transition-colors duration-200 ${
+notificationsEnabled ? 'bg-[#E06B53]' : 'bg-gray-300'
+}`}
+>
+<div
+className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${
+notificationsEnabled ? 'left-6' : 'left-1'
 }`}
 />
 </button>
